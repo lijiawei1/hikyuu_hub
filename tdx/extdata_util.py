@@ -7,7 +7,7 @@ import sys
 import logging
 from datetime import datetime
 import struct
-from typing import List, Dict, Optional, Union, Tuple, Any
+from typing import List, Dict, Optional, Union, Tuple, Any, Set
 import pandas as pd
 import numpy as np
 
@@ -488,14 +488,98 @@ def merge_stock_data(old_data: pd.DataFrame, new_data: pd.DataFrame) -> pd.DataF
     return merged_df.sort_values('date_int').reset_index(drop=True)
 
 
-def process_incremental_update(
+def process_incremental_update_files_optimized(
+        old_idx_path: str,
+        old_dat_path: str,
+        new_idx_path: str,
+        new_dat_path: str,
+        output_idx_path: str,
+        output_dat_path: str
+) -> bool:
+    """
+    优化版的增量更新处理主函数
+    """
+    try:
+        # 1. 并行加载idx文件
+        logger.info("并行加载idx文件...")
+        old_idx_df, new_idx_df = load_idx_data_parallel(old_idx_path, new_idx_path)
+
+        if old_idx_df.empty or new_idx_df.empty:
+            return False
+
+        # 2. 确定需要加载的股票代码
+        old_stocks = set(old_idx_df['stock_code'])
+        new_stocks = set(new_idx_df['stock_code'])
+        all_stocks = old_stocks | new_stocks
+
+        # 3. 并行加载dat文件
+        logger.info("并行加载dat文件...")
+        old_dat_data, new_dat_data = load_dat_data_parallel(
+            old_dat_path, old_idx_df, old_stocks,
+            new_dat_path, new_idx_df, new_stocks
+        )
+
+        # 4. 处理增量更新
+        updated_idx_df, updated_dat_data = process_incremental_update_optimized(
+            old_idx_df, old_dat_data, new_idx_df, new_dat_data
+        )
+
+        if updated_idx_df.empty or not updated_dat_data:
+            return False
+
+        # 5. 生成新文件
+        logger.info("生成新文件...")
+        success = generate_files_parallel(updated_idx_df, updated_dat_data, output_idx_path, output_dat_path)
+
+        return success
+
+    except Exception as e:
+        logger.error(f"处理增量更新时发生错误: {e}", exc_info=True)
+        return False
+
+
+def load_idx_data_parallel(old_path: str, new_path: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """并行加载idx文件"""
+    # 这里可以使用多线程，但为了简单起见，先顺序执行
+    old_idx_df = load_idx_data(old_path)
+    new_idx_df = load_idx_data(new_path)
+    return old_idx_df, new_idx_df
+
+
+def load_dat_data_parallel(
+        old_dat_path: str, old_idx_df: pd.DataFrame, old_stocks: Set[str],
+        new_dat_path: str, new_idx_df: pd.DataFrame, new_stocks: Set[str]
+) -> Tuple[Dict[str, pd.DataFrame], Dict[str, pd.DataFrame]]:
+    """并行加载dat文件"""
+    old_dat_data = load_stock_data_optimized(old_dat_path, old_idx_df, old_stocks)
+    new_dat_data = load_stock_data_optimized(new_dat_path, new_idx_df, new_stocks)
+    return old_dat_data, new_dat_data
+
+
+def generate_files_parallel(
+        idx_df: pd.DataFrame,
+        dat_data: Dict[str, pd.DataFrame],
+        idx_path: str,
+        dat_path: str
+) -> bool:
+    """并行生成文件"""
+    # 先生成dat文件，再生成idx文件
+    dat_success = generate_dat_file(dat_data, dat_path)
+    if not dat_success:
+        return False
+
+    idx_success = generate_idx_file(idx_df, idx_path)
+    return idx_success
+
+
+def process_incremental_update_optimized(
         old_idx_df: pd.DataFrame,
         old_dat_data: Dict[str, pd.DataFrame],
         new_idx_df: pd.DataFrame,
         new_dat_data: Dict[str, pd.DataFrame]
 ) -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """
-    处理增量更新，返回更新后的idx信息和股票数据
+    优化版的增量更新处理
 
     Args:
         old_idx_df: 现有idx数据的DataFrame
@@ -506,33 +590,48 @@ def process_incremental_update(
     Returns:
         Tuple: (更新后的idx DataFrame, 更新后的股票数据字典)
     """
-    # 验证股票代码一致性
-    old_stocks = set(old_idx_df['stock_code'])
-    new_stocks = set(new_idx_df['stock_code'])
+    # 使用字典快速查找
+    old_idx_dict = {row['stock_code']: row for _, row in old_idx_df.iterrows()}
+    new_idx_dict = {row['stock_code']: row for _, row in new_idx_df.iterrows()}
 
-    if old_stocks != new_stocks:
-        logger.error(f"股票代码不一致: 现有{len(old_stocks)}只, 增量{len(new_stocks)}只")
-        return pd.DataFrame(), {}
+    # 获取所有股票代码
+    all_stocks = sorted(set(old_idx_dict.keys()) | set(new_idx_dict.keys()))
 
-    # 处理每个股票的数据
     updated_dat_data = {}
     updated_idx_records = []
     current_cum_sum = 0
 
-    logger.info("开始处理每个股票的数据...")
-    for stock_code in old_stocks:
-        logger.info(f"处理股票: {stock_code}")
+    logger.info(f"开始处理 {len(all_stocks)} 只股票的数据...")
 
-        # 获取该股票的现有数据和增量数据
-        old_stock_data = old_dat_data.get(stock_code, pd.DataFrame())
-        new_stock_data = new_dat_data.get(stock_code, pd.DataFrame())
+    for stock_code in all_stocks:
+        # 确定数据来源
+        if stock_code in old_idx_dict:
+            market_code = old_idx_dict[stock_code]['market_code']
+            source = 'old'
+        else:
+            market_code = new_idx_dict[stock_code]['market_code']
+            source = 'new'
 
-        # 合并数据
-        merged_data = merge_stock_data(old_stock_data, new_stock_data)
+        # 获取数据
+        old_data = old_dat_data.get(stock_code, pd.DataFrame())
+        new_data = new_dat_data.get(stock_code, pd.DataFrame())
+
+        # 根据来源处理数据
+        if source == 'old' and not new_data.empty:
+            # 合并现有和增量数据
+            merged_data = merge_stock_data_fast(old_data, new_data)
+        elif source == 'new':
+            # 新增股票，直接使用增量数据
+            merged_data = new_data.tail(500) if len(new_data) > 500 else new_data
+        else:
+            # 现有股票无增量数据
+            merged_data = old_data.tail(500) if len(old_data) > 500 else old_data
+
+        # 确保不超过500条
+        if len(merged_data) > 500:
+            merged_data = merged_data.tail(500)
+
         updated_dat_data[stock_code] = merged_data
-
-        # 获取该股票的市场代码（从现有idx数据中获取）
-        market_code = old_idx_df[old_idx_df['stock_code'] == stock_code]['market_code'].iloc[0]
 
         # 更新idx记录
         record_count = len(merged_data)
@@ -543,13 +642,41 @@ def process_incremental_update(
             'cum_sum': current_cum_sum
         })
 
-        # 更新累计记录数
         current_cum_sum += record_count
 
-    # 创建更新后的idx DataFrame
+    # 批量创建DataFrame
     updated_idx_df = pd.DataFrame(updated_idx_records)
 
     return updated_idx_df, updated_dat_data
+
+
+def merge_stock_data_fast(old_data: pd.DataFrame, new_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    快速合并股票数据
+
+    Args:
+        old_data: 旧数据DataFrame
+        new_data: 新数据DataFrame
+
+    Returns:
+        DataFrame: 合并后的数据，最多500条记录
+    """
+    if old_data.empty:
+        return new_data.tail(500) if len(new_data) > 500 else new_data
+
+    if new_data.empty:
+        return old_data.tail(500) if len(old_data) > 500 else old_data
+
+    # 使用concat和drop_duplicates的优化版本
+    # 先处理新数据，再处理旧数据，这样drop_duplicates会保留新数据
+    merged_df = pd.concat([old_data, new_data], ignore_index=True)
+
+    # 使用更高效的去重方法
+    merged_df = merged_df.sort_values('date_int')
+    merged_df = merged_df.drop_duplicates(subset='date_int', keep='last')
+
+    # 保留最新的500条
+    return merged_df.tail(500).sort_values('date_int').reset_index(drop=True)
 
 
 def generate_dat_file(dat_data: Dict[str, pd.DataFrame], output_path: str) -> bool:
@@ -640,18 +767,20 @@ def process_incremental_update_files(
         if old_idx_df.empty:
             return False
 
-        old_dat_data = load_dat_data(old_dat_path, old_idx_df)
+        old_stocks = set(old_idx_df['stock_code'])
+        old_dat_data = load_stock_data(old_dat_path, old_idx_df, old_stocks)
         if not old_dat_data:
             return False
 
         # 2. 加载增量文件数据
         new_idx_df = load_idx_data(new_idx_path)
         if new_idx_df.empty:
+            logger.error("增量idx文件为空")
             return False
 
-        new_dat_data = load_dat_data(new_dat_path, new_idx_df)
-        if not new_dat_data:
-            return False
+        # 只加载增量idx文件中有的股票代码的数据
+        new_stocks = set(new_idx_df['stock_code'])
+        new_dat_data = load_stock_data(new_dat_path, new_idx_df, new_stocks)
 
         # 3. 处理增量更新
         updated_idx_df, updated_dat_data = process_incremental_update(
@@ -659,6 +788,7 @@ def process_incremental_update_files(
         )
 
         if updated_idx_df.empty or not updated_dat_data:
+            logger.error("增量更新处理失败")
             return False
 
         # 4. 生成新的dat文件
@@ -724,3 +854,132 @@ def generate_updated_files(
         return output_idx_path, output_dat_path
     else:
         return None, None
+
+
+def merge_idx_data(old_idx_df: pd.DataFrame, new_idx_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    高效合并现有idx数据和增量idx数据，处理股票代码不一致的情况
+
+    Args:
+        old_idx_df: 现有idx数据的DataFrame
+        new_idx_df: 增量idx数据的DataFrame
+
+    Returns:
+        DataFrame: 合并后的idx数据，包含所有股票代码并按股票代码升序排列
+    """
+    logger.info("开始高效合并idx数据...")
+
+    # 使用字典来快速查找记录，避免重复的DataFrame查询
+    old_records_dict = {row['stock_code']: row for _, row in old_idx_df.iterrows()}
+    new_records_dict = {row['stock_code']: row for _, row in new_idx_df.iterrows()}
+
+    # 获取所有股票代码并排序
+    all_stocks = sorted(set(old_records_dict.keys()) | set(new_records_dict.keys()))
+
+    logger.info(
+        f"现有股票数量: {len(old_records_dict)}, 增量股票数量: {len(new_records_dict)}, 合并后股票数量: {len(all_stocks)}")
+
+    # 使用列表推导式高效构建合并记录
+    merged_idx_records = []
+
+    for stock_code in all_stocks:
+        # 优先使用现有记录，如果没有则使用增量记录
+        if stock_code in old_records_dict:
+            record = old_records_dict[stock_code]
+            source = 'old'
+        else:
+            record = new_records_dict[stock_code]
+            source = 'new'
+
+        merged_idx_records.append({
+            'market_code': record['market_code'],
+            'stock_code': stock_code,
+            'record_count': record['record_count'],
+            'source': source
+        })
+
+    # 直接创建DataFrame，避免多次转换
+    merged_idx_df = pd.DataFrame(merged_idx_records)
+
+    # 计算累计记录数
+    merged_idx_df['cum_sum'] = merged_idx_df['record_count'].cumsum().shift(1).fillna(0).astype(int)
+
+    return merged_idx_df
+
+
+def load_stock_data_optimized(dat_path: str, idx_df: pd.DataFrame, stock_codes: Set[str] = None) -> Dict[
+    str, pd.DataFrame]:
+    """
+    优化版的数据加载方法
+
+    Args:
+        dat_path: dat文件路径
+        idx_df: 包含cum_sum和record_count的idx DataFrame
+        stock_codes: 需要加载的股票代码集合
+
+    Returns:
+        Dict: 键为股票代码，值为该股票数据的DataFrame
+    """
+    logger.info(f"优化加载dat文件: {dat_path}")
+
+    if stock_codes is None:
+        stock_codes = set(idx_df['stock_code'])
+
+    # 预先计算需要读取的数据范围
+    read_ranges = []
+    stock_mapping = {}
+
+    for _, row in idx_df.iterrows():
+        stock_code = row['stock_code']
+        if stock_code not in stock_codes:
+            continue
+
+        start_index = int(row['cum_sum'])
+        record_count = int(row['record_count'])
+        end_index = start_index + record_count
+
+        read_ranges.append((start_index, end_index, stock_code))
+        stock_mapping[stock_code] = (start_index, record_count)
+
+    # 按起始位置排序，减少磁盘寻址时间
+    read_ranges.sort(key=lambda x: x[0])
+
+    stock_data = {}
+
+    # 批量读取数据
+    try:
+        file_size = os.path.getsize(dat_path)
+        record_size = DAT_RECORD_SIZE
+
+        with open(dat_path, 'rb') as f:
+            for start_index, end_index, stock_code in read_ranges:
+                # 定位到起始位置
+                f.seek(start_index * record_size)
+
+                # 读取该股票的所有数据
+                data_records = []
+                for _ in range(end_index - start_index):
+                    data = f.read(record_size)
+                    if len(data) < record_size:
+                        break
+
+                    try:
+                        parsed_data = struct.unpack('<IIf', data)
+                        data_records.append({
+                            'date_int': parsed_data[0],
+                            'time_int': parsed_data[1],
+                            'value_f': parsed_data[2]
+                        })
+                    except struct.error:
+                        break
+
+                if data_records:
+                    stock_data[stock_code] = pd.DataFrame(data_records)
+                else:
+                    stock_data[stock_code] = pd.DataFrame()
+
+    except Exception as e:
+        logger.error(f"读取dat文件错误: {e}")
+        return {}
+
+    return stock_data
