@@ -10,6 +10,7 @@ import struct
 from typing import List, Dict, Optional, Union, Tuple, Any, Set
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -603,7 +604,7 @@ def process_incremental_update_optimized(
 
     logger.info(f"开始处理 {len(all_stocks)} 只股票的数据...")
 
-    for stock_code in all_stocks:
+    for stock_code in tqdm(all_stocks, desc="处理股票数据", unit="只"):
         # 确定数据来源
         if stock_code in old_idx_dict:
             market_code = old_idx_dict[stock_code]['market_code']
@@ -619,7 +620,7 @@ def process_incremental_update_optimized(
         # 根据来源处理数据
         if source == 'old' and not new_data.empty:
             # 合并现有和增量数据
-            merged_data = merge_stock_data_fast(old_data, new_data)
+            merged_data = merge_stock_data_robust(old_data, new_data)
         elif source == 'new':
             # 新增股票，直接使用增量数据
             merged_data = new_data.tail(500) if len(new_data) > 500 else new_data
@@ -679,6 +680,39 @@ def merge_stock_data_fast(old_data: pd.DataFrame, new_data: pd.DataFrame) -> pd.
     return merged_df.tail(500).sort_values('date_int').reset_index(drop=True)
 
 
+def merge_stock_data_robust(old_data: pd.DataFrame, new_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    使用 append_after_max_common_date_robust 的逻辑合并股票数据
+    保留最新的500条记录
+
+    Args:
+        old_data: 旧数据DataFrame
+        new_data: 新数据DataFrame
+
+    Returns:
+        DataFrame: 合并后的数据，最多500条记录
+    """
+    if old_data.empty:
+        return new_data.tail(500) if len(new_data) > 500 else new_data
+
+    if new_data.empty:
+        return old_data.tail(500) if len(old_data) > 500 else old_data
+
+    try:
+        # 使用 append_after_max_common_date_robust 的逻辑合并数据
+        merged_df = append_after_max_common_date_robust(old_data, new_data, keep_original=True)
+
+        # 确保不超过500条记录
+        if len(merged_df) > 500:
+            merged_df = merged_df.tail(500)
+
+        return merged_df
+
+    except Exception as e:
+        logger.warning(f"使用robust方法合并数据失败: {e}, 回退到快速合并方法")
+        # 如果robust方法失败，回退到快速合并方法
+        return merge_stock_data_fast(old_data, new_data)
+
 def generate_dat_file(dat_data: Dict[str, pd.DataFrame], output_path: str) -> bool:
     """
     根据股票数据生成dat文件
@@ -694,6 +728,11 @@ def generate_dat_file(dat_data: Dict[str, pd.DataFrame], output_path: str) -> bo
 
     # 收集所有数据记录
     all_records = []
+    total_records = sum(len(df) for df in dat_data.values())
+
+    # 添加进度条
+    pbar = tqdm(total=total_records, desc="写入DAT记录", unit="条")
+
     for stock_code, df in dat_data.items():
         for _, row in df.iterrows():
             all_records.append((
@@ -701,6 +740,8 @@ def generate_dat_file(dat_data: Dict[str, pd.DataFrame], output_path: str) -> bo
                 int(row.get('time_int', 0)),
                 float(row['value_f'])
             ))
+            pbar.update(1)
+    pbar.close()
 
     # 写入文件
     return write_binary_data(output_path, all_records)
@@ -739,123 +780,6 @@ def generate_idx_file(idx_df: pd.DataFrame, output_path: str) -> bool:
         return False
 
 
-def process_incremental_update_files(
-        old_idx_path: str,
-        old_dat_path: str,
-        new_idx_path: str,
-        new_dat_path: str,
-        output_idx_path: str,
-        output_dat_path: str
-) -> bool:
-    """
-    处理通达信扩展数据文件的增量更新（主函数）
-
-    Args:
-        old_idx_path: 现有idx文件路径
-        old_dat_path: 现有dat文件路径
-        new_idx_path: 增量idx文件路径
-        new_dat_path: 增量dat文件路径
-        output_idx_path: 输出idx文件路径
-        output_dat_path: 输出dat文件路径
-
-    Returns:
-        bool: 处理是否成功
-    """
-    try:
-        # 1. 加载现有文件数据
-        old_idx_df = load_idx_data(old_idx_path)
-        if old_idx_df.empty:
-            return False
-
-        old_stocks = set(old_idx_df['stock_code'])
-        old_dat_data = load_stock_data(old_dat_path, old_idx_df, old_stocks)
-        if not old_dat_data:
-            return False
-
-        # 2. 加载增量文件数据
-        new_idx_df = load_idx_data(new_idx_path)
-        if new_idx_df.empty:
-            logger.error("增量idx文件为空")
-            return False
-
-        # 只加载增量idx文件中有的股票代码的数据
-        new_stocks = set(new_idx_df['stock_code'])
-        new_dat_data = load_stock_data(new_dat_path, new_idx_df, new_stocks)
-
-        # 3. 处理增量更新
-        updated_idx_df, updated_dat_data = process_incremental_update(
-            old_idx_df, old_dat_data, new_idx_df, new_dat_data
-        )
-
-        if updated_idx_df.empty or not updated_dat_data:
-            logger.error("增量更新处理失败")
-            return False
-
-        # 4. 生成新的dat文件
-        if not generate_dat_file(updated_dat_data, output_dat_path):
-            return False
-
-        # 5. 生成新的idx文件
-        if not generate_idx_file(updated_idx_df, output_idx_path):
-            return False
-
-        logger.info("增量更新处理完成")
-        return True
-
-    except Exception as e:
-        logger.error(f"处理增量更新时发生错误: {e}", exc_info=True)
-        return False
-
-
-def generate_updated_files(
-        old_idx_path: str,
-        old_dat_path: str,
-        new_idx_path: str,
-        new_dat_path: str,
-        output_dir: str
-) -> Tuple[Optional[str], Optional[str]]:
-    """
-    生成更新后的idx和dat文件
-
-    Args:
-        old_idx_path: 现有idx文件路径
-        old_dat_path: 现有dat文件路径
-        new_idx_path: 增量idx文件路径
-        new_dat_path: 增量dat文件路径
-        output_dir: 输出目录路径
-
-    Returns:
-        Tuple: (成功生成的idx文件路径, dat文件路径) 或 (None, None) 如果失败
-    """
-    # 创建输出目录
-    os.makedirs(output_dir, exist_ok=True)
-
-    # 生成输出文件路径
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_idx_path = os.path.join(output_dir, f"extdata_updated_{timestamp}.idx")
-    output_dat_path = os.path.join(output_dir, f"extdata_updated_{timestamp}.dat")
-
-    # 处理增量更新
-    success = process_incremental_update_files(
-        old_idx_path, old_dat_path,
-        new_idx_path, new_dat_path,
-        output_idx_path, output_dat_path
-    )
-
-    if success:
-        # 更新文件信息（创建时间）
-        write_file_info(output_idx_path, datetime.now())
-        write_file_info(output_dat_path, datetime.now())
-
-        logger.info(f"更新后的文件已生成:")
-        logger.info(f"  IDX文件: {output_idx_path}")
-        logger.info(f"  DAT文件: {output_dat_path}")
-
-        return output_idx_path, output_dat_path
-    else:
-        return None, None
-
-
 def merge_idx_data(old_idx_df: pd.DataFrame, new_idx_df: pd.DataFrame) -> pd.DataFrame:
     """
     高效合并现有idx数据和增量idx数据，处理股票代码不一致的情况
@@ -882,7 +806,8 @@ def merge_idx_data(old_idx_df: pd.DataFrame, new_idx_df: pd.DataFrame) -> pd.Dat
     # 使用列表推导式高效构建合并记录
     merged_idx_records = []
 
-    for stock_code in all_stocks:
+    # 使用 tqdm 包装所有股票代码的迭代过程
+    for stock_code in tqdm(all_stocks, desc="合并股票代码", unit="只"):  # 添加进度条
         # 优先使用现有记录，如果没有则使用增量记录
         if stock_code in old_records_dict:
             record = old_records_dict[stock_code]
@@ -929,7 +854,7 @@ def load_stock_data_optimized(dat_path: str, idx_df: pd.DataFrame, stock_codes: 
     read_ranges = []
     stock_mapping = {}
 
-    for _, row in idx_df.iterrows():
+    for _, row in tqdm(idx_df.iterrows(), total=len(idx_df), desc="加载股票数据", unit="只"):
         stock_code = row['stock_code']
         if stock_code not in stock_codes:
             continue

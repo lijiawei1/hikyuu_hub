@@ -33,10 +33,38 @@ df.to_csv(f"extdata_42_dat_work_{stock_code}.csv")
 """
 
 # idf_df = load_idx_data("D:\\app\\hwx\\T0002\\extdata\\extdata_42.idx")
-# df.to_csv("extdata_42_idx_work.csv")
+# idf_df.to_csv("extdata_42_idx_work.csv")
 
 # mapping = load_dat_data("D:\\app\\hwx\\T0002\\extdata\\extdata_42.dat", idf_df)
 # print(len(mapping.keys()))
+
+# idf_df = load_idx_data("D:\\app\\hwx\\T0002\\extdata\\extdata_42.idx")
+# idf_df.to_csv("extdata_42_idx_work.csv")
+
+def load_dat_data(file_path: str, stock_code: str, df: pd.DataFrame) -> pd.DataFrame:
+    row = df[df['stock_code'] == stock_code].iloc[0]
+    index = int(row['i'])
+    record_count = (row['record_count'])
+    cum_sum = int(row['cum_sum'])
+    print(f"stock_code={stock_code}, index={index}, record_count={record_count}, start_index={cum_sum}")
+    records = parse_file_dat2(file_path, cum_sum, record_count)
+    df = pd.DataFrame(records)
+    return df
+
+# idx_file_path = "D:\\app\\hwx\\T0002\\extdata\\extdata_42.idx"
+# dat_file_path = "D:\\app\\hwx\\T0002\\extdata\\extdata_42.dat"
+
+idx_file_path = "F:\\stock\\temp_tdx_extdata\\20250827\\extdata_42.idx"
+dat_file_path = "F:\\stock\\temp_tdx_extdata\\20250827\\extdata_42.dat"
+
+records = parse_file_idx(idx_file_path)
+df = pd.DataFrame(records)
+df['cum_sum'] = df['record_count'].cumsum().shift(1).fillna(0)
+
+stock_code = "873706"
+
+df = load_dat_data(dat_file_path, stock_code, df)
+df.to_csv(f"extdata_42_dat_work_{stock_code}.csv")
 
 
 

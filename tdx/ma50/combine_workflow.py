@@ -59,7 +59,7 @@ class Combine2Processor(BaseProcessor):
         self.logger.debug(f"增量dat文件：{base_idx_file_path}")
 
 
-        extdata_util.process_incremental_update_files(
+        extdata_util.process_incremental_update_files_optimized(
             old_idx_path=work_idx_file_path,
             old_dat_path=work_dat_file_path,
             new_idx_path=base_idx_file_path,
