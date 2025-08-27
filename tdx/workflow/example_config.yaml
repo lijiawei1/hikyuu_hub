@@ -1,0 +1,19 @@
+# 工作流配置
+workflow:
+  name: "示例工作流"
+  max_retries: 3
+  timeout: 3600
+
+# 日志配置
+logging:
+  level: "INFO"
+  file: "workflow.log"
+
+# 处理器特定配置
+processors:
+  data_loader:
+    input_path: "/path/to/input/data"
+  data_transformer:
+    method: "normalize"
+  data_saver:
+    output_path: "/path/to/output/data"

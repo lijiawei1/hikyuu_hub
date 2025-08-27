@@ -2,480 +2,289 @@
 # 生成通达信MA50的数据文件
 # 数据结构引用：https://m.55188.com/thread-24998030-1-1.html
 
-# extdata_1.IDX索引文件，每条记录29字节，对应一个股票代码，按股票代码(数值化)升序连续存放
-# 2)
-# 偏移量Hex    数据含义                                数据类型
-# 00 ~01        市场类型2字节(16位);深圳00，上海01       16位整数
-# 02~08         股票代码7字节数;6个字符，最后一位00       文本
-# 09~18         16字节，00                            整数
-# 19~1C         每个股票数据记录个数4字节 (32位)         备注
-# 共N个股票
-
-# (3)extdata_1.dat，扩展数据文件，每个数据占用12字节，与数据记录个数相乘就是每只股票的总记录数，所有故据按照extdata1.IDx索引文件中的排列顺序连续存放。
-
-
-# 偏移量Hex    数据含义                                                                   数据类型     备注
-# 00~03         数据日期4字节，例如20240905(2024年9月5日)                                   整数
-# 04~07         数据时间4字节;例如144200(14:42:00)，以分钟为计算周期时，此项才会有数值。           整数
-# 08~0B         4字节浮点值
-#
-#               (1)保存排名序号。勾选【生成横向排名数据】选项:计算指标数值，用该数值排序，           float
-#               股票在选定【计算品种】中的排名。该序号受【排名方法】(单选框)影响。
-#               (2)保存选定的指标数值。不勾选【生成横向排名数据】选项:计算该指标数值
-#
-# 共N条记录
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
-"""
-项目工具函数集合
-包含各种常用的辅助功能
-"""
-
 import os
 import sys
 import logging
 from datetime import datetime
-import json
 import struct
-from typing import List, Dict
+from typing import List, Dict, Optional, Union, Tuple, Any
 import pandas as pd
 import numpy as np
 
-from narwhals import Datetime
-
 # 配置日志
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-def setup_logging(log_level=logging.INFO):
-    """配置项目日志"""
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler('app.log')
-        ]
-    )
+# 常量定义
+IDX_RECORD_SIZE = 29
+DAT_RECORD_SIZE = 12
+INFO_RECORD_SIZE = 293
 
 
+# def setup_logging(log_level=logging.INFO) -> None:
+#     """配置项目日志"""
+#     logging.basicConfig(
+#         level=log_level,
+#         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+#         handlers=[
+#             logging.StreamHandler(),
+#             logging.FileHandler('app.log')
+#         ]
+#     )
+#     logger.setLevel(log_level)
 
 
-def write_file_dat(file_path, data, mode='r+b', encoding='utf-8'):
-    """安全写入数据文件"""
+def write_binary_data(file_path: str, data: List[Tuple[int, int, float]], mode: str = 'wb') -> bool:
+    """安全写入二进制数据文件"""
     try:
-        with open(file_path, mode, encoding=encoding) as f:
-            for item in data:
-                # 每个数据项包含：整数1、整数2、4字节浮点数
-                # 使用struct.pack打包为二进制格式，格式符含义：
-                # I: 4字节无符号整数, I: 4字节无符号整数, f: 浮点数，需要转换为4字节浮点数
-                packed_data = struct.pack('IIff', item[0], item[1], item[2])
+        with open(file_path, mode) as f:
+            for date_int, time_int, value_f in data:
+                packed_data = struct.pack('IIf', date_int, time_int, value_f)
                 f.write(packed_data)
+        logger.info(f"成功写入数据到文件: {file_path}")
         return True
     except Exception as e:
-        logger.error(f"写入文件错误: {e}")
+        logger.error(f"写入文件错误: {file_path}, 错误: {e}")
         return False
 
 
-def write_file_info_batch(file_path, indexes, field_offset, fmt, values):
-
-    # info 记录
-    INFO_RECORD_SIZE = 293
-    # 转换
+def write_file_info_batch(file_path: str, indexes: List[int], field_offset: int,
+                          fmt: str, values: Tuple[Any]) -> bool:
+    """批量写入文件信息"""
     offsets = np.array(indexes) * INFO_RECORD_SIZE + field_offset
-    print(offsets)
-    write_file_info_inner(file_path, offsets, fmt, values)
-
-
-def write_file_info_inner(file_path, offsets, fmt, values):
     logger.debug(f"修改文件：{file_path}，偏移量列表: {offsets}，写入值：{values}")
+    return _write_file_info_inner(file_path, offsets, fmt, values)
+
+
+def _write_file_info_inner(file_path: str, offsets: List[int], fmt: str, values: Tuple[Any]) -> bool:
+    """内部函数：实际执行文件信息写入"""
     try:
         with open(file_path, 'r+b') as f:
-
             for offset in offsets:
-
                 packed_data = struct.pack(fmt, *values)
                 f.seek(offset)
                 f.write(packed_data)
-
-            logger.debug(f"写入成功")
-            return True
+        logger.info(f"成功写入文件信息: {file_path}")
+        return True
     except Exception as e:
-        logger.error(f"写入文件错误: {e}")
+        logger.error(f"写入文件信息错误: {file_path}, 错误: {e}")
         return False
 
 
-def write_file_info(file_path, create: datetime, mode='wb'):
-
-    print("待写入时间：" + create.strftime('%Y-%m-%d %H:%M:%S'))
+def write_file_info(file_path: str, create: datetime, mode: str = 'r+b') -> bool:
+    """写入文件信息"""
+    logger.info(f"待写入时间：{create.strftime('%Y-%m-%d %H:%M:%S')}")
     try:
-        with open(file_path, 'r+b') as f:
-
+        with open(file_path, mode) as f:
             date_int = int(create.strftime("%Y%m%d"))
             time_int = int(create.strftime("%H%M%S"))
-
-            print(date_int)
-            print(time_int)
             packed_data = struct.pack('II', date_int, time_int)
             f.seek(0x42)
             f.write(packed_data)
-
-            return True
+        logger.info(f"成功写入文件信息: {file_path}")
+        return True
     except Exception as e:
-        logger.error(f"写入文件错误: {e}")
+        logger.error(f"写入文件信息错误: {file_path}, 错误: {e}")
         return False
 
-def parse_file_info(file_path) -> List[Dict]:
+
+def parse_binary_file(file_path: str, record_size: int, record_format: str,
+                      record_processor: callable) -> List[Dict]:
     """
-    解析固定记录长度的二进制文件
+    通用二进制文件解析函数
 
     Args:
-        file_path: 二进制文件路径
+        file_path: 文件路径
+        record_size: 记录大小
+        record_format: 结构格式
+        record_processor: 记录处理函数
 
     Returns:
-        包含所有解析记录的列表
+        解析后的记录列表
     """
     records = []
 
     try:
-        # 获取文件大小
         file_size = os.path.getsize(file_path)
-        # 每个记录大小
-        RECORD_SIZE = 293
+        num_records = file_size // record_size
 
-        # 计算记录数量
-        num_records = file_size // RECORD_SIZE
-        logger.debug(f"文件大小: {file_size} 字节，每个记录大小: {RECORD_SIZE} 字节，记录数量: {num_records}")
-
-        # 示例格式定义（需要根据实际文件结构调整）
-        record_format = (
-            '<'  # 厉害，大端序和小端序还有区别
-            'H'  # 2
-            '64s' # 64+2=66
-            'I'  # 数据生成日期 4+66=70
-            'I'  # 数据生成时间 4+70=74
-            'I'  # 毫秒数 4+70=78
-            '83x'   # 未知字段 1
-                    # 指标公式名称 14
-                    # 参数设置 64
-                    # 参数个数 1
-                    # 计算周期 2
-                    # 计算时段 1
-                    # 跳过解析 1+14+64+1+2+1=83
-            'I'     # 计算时段（日期范围） 开始日期
-            'I'     # 结束日期
-            '124x'
-        )
-
-        # 计算格式字符串对应的字节数
         format_size = struct.calcsize(record_format)
-        if format_size != RECORD_SIZE:
-            print(f"警告: 格式大小({format_size})与记录大小({RECORD_SIZE})不匹配!")
+        if format_size != record_size:
+            logger.warning(f"格式大小({format_size})与记录大小({record_size})不匹配!")
 
-        # 打开二进制文件读取
+        logger.debug(f"文件大小: {file_size} 字节，记录大小: {record_size} 字节，记录数量: {num_records}")
+
         with open(file_path, 'rb') as f:
             for record_index in range(num_records):
                 try:
-                    # 读取一个记录
-                    data = f.read(RECORD_SIZE)
-
-                    if len(data) < RECORD_SIZE:
-                        print(f"记录 {record_index}: 数据不足 {len(data)} 字节")
+                    data = f.read(record_size)
+                    if len(data) < record_size:
+                        logger.warning(f"记录 {record_index}: 数据不足 {len(data)} 字节")
                         break
 
-                    # 解析二进制数据
                     parsed_data = struct.unpack(record_format, data)
-
-                    # 将解析的数据转换为字典
-                    record_dict = {
-                        'i': record_index,
-                        'seq': parsed_data[0],
-                        'name': parsed_data[1].decode('gb2312', errors='ignore').rstrip('\x00'),
-                        'date_int': parsed_data[2],
-                        'time_int': parsed_data[3],
-                        # 'time_int': parsed_data[4],
-                        'date_start': parsed_data[5],
-                        'date_end': parsed_data[6],
-                        'raw_hex': data.hex()  # 保留原始十六进制数据
-                    }
-
+                    record_dict = record_processor(record_index, parsed_data, data)
                     records.append(record_dict)
-
-                    # 打印每个记录的信息（可选）
-                    print(f"\n记录 {record_index}:")
-                    for key, value in record_dict.items():
-                        if key != 'raw_hex':  # 不打印完整的十六进制数据
-                            print(f"  {key}: {value}")
-
-                except struct.error as e:
-                    print(f"解析记录 {record_index} 时出错: {e}")
-                    break
-
-    except Exception as e:
-        logger.error(f"读取文件错误: {e}", exc_info=True)
-        return []
-
-    return records
-
-
-def parse_file_idx(file_path) -> List[Dict]:
-    records = []
-
-    try:
-        # 获取文件大小
-        file_size = os.path.getsize(file_path)
-        # 每个记录大小
-        RECORD_SIZE = 29
-
-        # 计算记录数量
-        num_records = file_size // RECORD_SIZE
-        logger.debug(f"文件大小: {file_size} 字节，每个记录大小: {RECORD_SIZE} 字节，记录数量: {num_records}")
-
-        # 示例格式定义（需要根据实际文件结构调整）
-        record_format = (
-            '<'   # 厉害，大端序和小端序还有区别
-            'H'   # 市场类型 2字节 无符号整数
-            '7s'  # 股票代码
-            '16x' # 00
-            'I'   # 4
-        )
-
-        # 计算格式字符串对应的字节数
-        format_size = struct.calcsize(record_format)
-        if format_size != RECORD_SIZE:
-            logger.error(f"警告: 格式大小({format_size})与记录大小({RECORD_SIZE})不匹配!")
-
-        # 打开二进制文件读取
-        with open(file_path, 'rb') as f:
-            for record_index in range(num_records):
-                try:
-                    # 读取一个记录
-                    data = f.read(RECORD_SIZE)
-
-                    if len(data) < RECORD_SIZE:
-                        print(f"记录 {record_index}: 数据不足 {len(data)} 字节")
-                        break
-
-                    # 解析二进制数据
-                    parsed_data = struct.unpack(record_format, data)
-
-                    # 将解析的数据转换为字典
-                    record_dict = {
-                        'i': record_index,
-                        'market_code': parsed_data[0],
-                        'stock_code': parsed_data[1].decode('gb2312', errors='ignore').rstrip('\x00'),
-                        # 'raw_hex': parsed_data[2],
-                        'record_count': parsed_data[2],
-                    }
-
-                    records.append(record_dict)
-
-                    # 打印每个记录的信息（可选）
-                    print(f"\n记录 {record_index}:")
-                    for key, value in record_dict.items():
-                        if key != 'raw_hex':  # 不打印完整的十六进制数据
-                            print(f"  {key}: {value}")
 
                 except struct.error as e:
                     logger.error(f"解析记录 {record_index} 时出错: {e}")
                     break
 
     except Exception as e:
-        logger.error(f"读取索引文件错误: {e}", exc_info=True)
-        return []
-
-    return records
-
-def parse_file_dat(file_path) -> List[Dict]:
-    records = []
-
-    try:
-        # 获取文件大小
-        file_size = os.path.getsize(file_path)
-        # 每个记录大小
-        RECORD_SIZE = 12
-
-        # 计算记录数量
-        num_records = file_size // RECORD_SIZE
-        logger.debug(f"文件大小: {file_size} 字节，每个记录大小: {RECORD_SIZE} 字节，记录数量: {num_records}")
-
-        # 示例格式定义（需要根据实际文件结构调整）
-        record_format = (
-            '<'   # 厉害，大端序和小端序还有区别
-            'I'   # 市场类型 2字节 无符号整数
-            'I'   # 股票代码
-            'f'   # 4字节浮点值
-        )
-
-        # 计算格式字符串对应的字节数
-        format_size = struct.calcsize(record_format)
-        if format_size != RECORD_SIZE:
-            logger.error(f"警告: 格式大小({format_size})与记录大小({RECORD_SIZE})不匹配!")
-
-        # 打开二进制文件读取
-        with open(file_path, 'rb') as f:
-            for record_index in range(num_records):
-                try:
-                    # 读取一个记录
-                    data = f.read(RECORD_SIZE)
-
-                    if len(data) < RECORD_SIZE:
-                        print(f"记录 {record_index}: 数据不足 {len(data)} 字节")
-                        break
-
-                    # 解析二进制数据
-                    parsed_data = struct.unpack(record_format, data)
-
-                    # 将解析的数据转换为字典
-                    record_dict = {
-                        # 'i': record_index,
-                        'date_int': parsed_data[0],
-                        'time_int': parsed_data[1],
-                        'value_f': parsed_data[2],
-                    }
-
-                    records.append(record_dict)
-
-                    # 打印每个记录的信息（可选）
-                    # print(f"\n记录 {record_index}:")
-                    # for key, value in record_dict.items():
-                    #     if key != 'raw_hex':  # 不打印完整的十六进制数据
-                    #         print(f"  {key}: {value}")
-
-                except struct.error as e:
-                    logger.error(f"解析记录 {record_index} 时出错: {e}")
-                    break
-
-    except Exception as e:
-        logger.error(f"读取索引文件错误: {e}", exc_info=True)
-        return []
-
-    return records
-
-def parse_file_dat_by_idx(file_path, records: []) -> List[Dict]:
-    records = []
-
-    try:
-        # 获取文件大小
-        file_size = os.path.getsize(file_path)
-        # 每个记录大小
-        RECORD_SIZE = 29
-
-        # 计算记录数量
-        num_records = file_size // RECORD_SIZE
-        logger.debug(f"文件大小: {file_size} 字节，每个记录大小: {RECORD_SIZE} 字节，记录数量: {num_records}")
-
-        # 示例格式定义（需要根据实际文件结构调整）
-        record_format = (
-            '<'   # 厉害，大端序和小端序还有区别
-            'H'   # 市场类型 2字节 无符号整数
-            '7s'  # 股票代码
-            '16x' # 00
-            'I'   # 4
-        )
-
-        # 计算格式字符串对应的字节数
-        format_size = struct.calcsize(record_format)
-        if format_size != RECORD_SIZE:
-            logger.error(f"警告: 格式大小({format_size})与记录大小({RECORD_SIZE})不匹配!")
-
-        # 打开二进制文件读取
-        with open(file_path, 'rb') as f:
-            for record_index in range(num_records):
-                try:
-                    # 读取一个记录
-                    data = f.read(RECORD_SIZE)
-
-                    if len(data) < RECORD_SIZE:
-                        print(f"记录 {record_index}: 数据不足 {len(data)} 字节")
-                        break
-
-                    # 解析二进制数据
-                    parsed_data = struct.unpack(record_format, data)
-
-                    # 将解析的数据转换为字典
-                    record_dict = {
-                        'i': record_index,
-                        'market_code': parsed_data[0],
-                        'stock_code': parsed_data[1].decode('gb2312', errors='ignore').rstrip('\x00'),
-                        # 'raw_hex': parsed_data[2],
-                        'record_count': parsed_data[2],
-                    }
-
-                    records.append(record_dict)
-
-                    # 打印每个记录的信息（可选）
-                    #print(f"\n记录 {record_index}:")
-                    #for key, value in record_dict.items():
-                    #    if key != 'raw_hex':  # 不打印完整的十六进制数据
-                    #        print(f"  {key}: {value}")
-
-                except struct.error as e:
-                    logger.error(f"解析记录 {record_index} 时出错: {e}")
-                    break
-
-    except Exception as e:
-        logger.error(f"读取索引文件错误: {e}", exc_info=True)
+        logger.error(f"读取文件错误: {file_path}, 错误: {e}", exc_info=True)
         return []
 
     return records
 
 
-def read_file_info(file_path, encoding='utf-8'):
-    try:
-        # 读取二进制文件
-        with open(file_path, 'rb') as f:
-            data = f.read()
-
-        # 1.数据序号
-        seq = struct.unpack('<H', data[0:2])[0]
-        print(f"序号: {seq}")
-        text_bytes = struct.unpack('64s', data[2:66])[0]
-        text = text_bytes.decode(encoding).rstrip('\x00')
-        print(f"文本：{text}")
-
-        date_int = struct.unpack('<I', data[66:70])[0]
-        print(f"日期：{date_int}")
-        time_int = struct.unpack('<I', data[70:74])[0]
-        print(f"时间：{time_int}")
-        millis_int = struct.unpack('<I', data[74:78])[0]
-        print(f"毫秒：{millis_int}")
-
-        c_char = struct.unpack('c', data[78:79])[0]
-        print(f"未知：{c_char}")
-        text_bytes = struct.unpack('14s', data[79:93])[0]
-        text = text_bytes.decode(encoding).rstrip('\x00')
-        print(f"指标公式名称：{text}")
-
-        # 参数设置-设置计算参数  byte 1
-
-        # 计算周期 16位整数 2
-
-        # 计算时段 byte 1
-
-        # 16个参数，4字节的32位浮点数
-        # text_bytes = struct.unpack('', data[93:157])[0]
-        # text = text_bytes.decode(encoding).rstrip('\x00')
-        # print(f"指标公式名称：{text}")
-
-        # TODO 只需要修改
-        #  42-45的数据生产日期
-        #  46-49的数据生产时间
-
-        # 遍历数据项（假设每项占32字节）
-        # for i in range(header):
-        #     item_start = 4 + i * 32
-        #     item_data = struct.unpack('8sffI', data[item_start:item_start + 20])  # 示例格式
-        #     print(f"指标名: {item_data[0].decode('gbk')}, 数值: {item_data[1]}")
-    except Exception as e:
-        logger.error(f"读取文件错误: {e}")
-        return False
+def _process_info_record(record_index: int, parsed_data: tuple, raw_data: bytes) -> Dict:
+    """处理信息记录"""
+    return {
+        # 'i': record_index,
+        'seq': parsed_data[0],
+        'name': parsed_data[1].decode('gb2312', errors='ignore').rstrip('\x00'),
+        'date_int': parsed_data[2],
+        'time_int': parsed_data[3],
+        'date_start': parsed_data[5],
+        'date_end': parsed_data[6]
+        # 'raw_hex': raw_data.hex()
+    }
 
 
-def update_and_append_df(df1, df2, n=10, m=20):
+def _process_idx_record(record_index: int, parsed_data: tuple, raw_data: bytes) -> Dict:
+    """处理索引记录"""
+    return {
+        'i': record_index,
+        'market_code': parsed_data[0],
+        'stock_code': parsed_data[1].decode('gb2312', errors='ignore').rstrip('\x00'),
+        'record_count': parsed_data[2],
+    }
+
+
+def _process_dat_record(record_index: int, parsed_data: tuple, raw_data: bytes) -> Dict:
+    """处理数据记录"""
+    return {
+        'date_int': parsed_data[0],
+        'time_int': parsed_data[1],
+        'value_f': parsed_data[2],
+    }
+
+
+def parse_file_info(file_path: str) -> List[Dict]:
+    """解析信息文件"""
+    record_format = (
+        '<'  # 小端序
+        'H'  # 2字节无符号整数
+        '64s'  # 64字节字符串
+        'I'  # 4字节无符号整数
+        'I'  # 4字节无符号整数
+        'I'  # 4字节无符号整数
+        '83x'  # 跳过83字节
+        'I'  # 4字节无符号整数
+        'I'  # 4字节无符号整数
+        '124x'  # 跳过124字节
+    )
+    return parse_binary_file(file_path, INFO_RECORD_SIZE, record_format, _process_info_record)
+
+
+def parse_file_idx(file_path: str) -> List[Dict]:
+    """解析索引文件"""
+    record_format = (
+        '<'  # 小端序
+        'H'  # 2字节无符号整数
+        '7s'  # 7字节字符串
+        '16x'  # 跳过16字节
+        'I'  # 4字节无符号整数
+    )
+    return parse_binary_file(file_path, IDX_RECORD_SIZE, record_format, _process_idx_record)
+
+
+def parse_file_dat(file_path: str) -> List[Dict]:
+    """解析数据文件"""
+    record_format = (
+        '<'  # 小端序
+        'I'  # 4字节无符号整数
+        'I'  # 4字节无符号整数
+        'f'  # 4字节浮点数
+    )
+    return parse_binary_file(file_path, DAT_RECORD_SIZE, record_format, _process_dat_record)
+
+
+def parse_file_dat2(file_path: str, start_index: int, record_count: int) ->  List[Dict]:
     """
-    更新dataframe1：用df2的最后N条数据替换或追加到df1
+    解析数据文件
+    Args:
+        file_path: 文件路径
+        start_index: 起始索引
+        record_count: 记录数量
+    Returns:
+        解析后的记录列表
+    """
+    record_format = (
+        '<'  # 小端序
+        'I'  # 4字节无符号整数
+        'I'  # 4字节无符号整数
+        'f'  # 4字节浮点数
+    )
+    return parse_binary_file2(file_path, DAT_RECORD_SIZE, record_format, start_index, record_count, _process_dat_record)
+
+
+def parse_binary_file2(file_path: str, record_size: int, record_format: str, index: int, record_count: int,
+                      record_processor: callable) -> List[Dict]:
+    """
+    通用二进制文件解析函数
+
+    Args:
+        file_path: 文件路径
+        record_size: 记录大小
+        record_format: 结构格式
+        index: 起始索引
+        record_count: 记录数量
+        record_processor: 记录处理函数
+    Returns:
+        解析后的记录列表
+    """
+    records = []
+
+    try:
+        file_size = os.path.getsize(file_path)
+        num_records = file_size // record_size
+
+        format_size = struct.calcsize(record_format)
+        if format_size != record_size:
+            logger.warning(f"格式大小({format_size})与记录大小({record_size})不匹配!")
+
+        logger.debug(f"文件大小: {file_size} 字节，记录大小: {record_size} 字节，记录数量: {num_records}")
+
+        with open(file_path, 'rb') as f:
+
+            # 先定位到起始位置：
+            f.seek(record_size * index)
+
+            for record_index in range(record_count):
+                try:
+                    data = f.read(record_size)
+                    if len(data) < record_size:
+                        logger.warning(f"记录 {record_index}: 数据不足 {len(data)} 字节")
+                        break
+
+                    parsed_data = struct.unpack(record_format, data)
+                    record_dict = record_processor(record_index, parsed_data, data)
+                    records.append(record_dict)
+
+                except struct.error as e:
+                    logger.error(f"解析记录 {record_index} 时出错: {e}")
+                    break
+
+    except Exception as e:
+        logger.error(f"读取文件错误: {file_path}, 错误: {e}", exc_info=True)
+        return []
+
+    return records
+
+
+def update_and_append_df(df1: pd.DataFrame, df2: pd.DataFrame, n: int = 10, m: int = 20) -> pd.DataFrame:
+    """
+    更新DataFrame：用df2的最后N条数据替换或追加到df1
 
     Args:
         df1: 原始DataFrame
@@ -486,33 +295,22 @@ def update_and_append_df(df1, df2, n=10, m=20):
     Returns:
         更新后的DataFrame（最后m条）
     """
-    # 取df2的最后n条数据
     df2_last_n = df2.tail(n).copy()
 
-    # 确保df2有time_int列，如果没有则添加（默认0）
     if 'time_int' not in df2_last_n.columns:
         df2_last_n['time_int'] = 0
 
-    # 重新排列列顺序以匹配df1
     df2_last_n = df2_last_n[df1.columns]
-
-    # 找出需要更新的日期（df2_last_n中存在的日期）
     update_dates = set(df2_last_n['date_int'])
-
-    # 从df1中移除这些日期的记录（如果存在）
     df1_updated = df1[~df1['date_int'].isin(update_dates)]
-
-    # 追加df2_last_n的数据
     df1_updated = pd.concat([df1_updated, df2_last_n], ignore_index=True)
-
-    # 按date_int排序
     df1_updated = df1_updated.sort_values('date_int').reset_index(drop=True)
 
-    # 返回最后m条数据
     return df1_updated.tail(m)
 
 
-def append_after_max_common_date_robust(df1, df2, keep_original=True):
+def append_after_max_common_date_robust(df1: pd.DataFrame, df2: pd.DataFrame,
+                                        keep_original: bool = True) -> pd.DataFrame:
     """
     增强版本：处理各种边界情况
 
@@ -520,33 +318,29 @@ def append_after_max_common_date_robust(df1, df2, keep_original=True):
         df1: 原始DataFrame
         df2: 新数据DataFrame
         keep_original: 是否保留原始df1中max_common_date之前的数据
+
+    Returns:
+        合并后的DataFrame
     """
-    # 参数验证
     if df1.empty or df2.empty:
         raise ValueError("错误: 输入DataFrame不能为空")
 
-    # 确保有date_int列
     if 'date_int' not in df1.columns or 'date_int' not in df2.columns:
         raise ValueError("错误: DataFrame必须包含date_int列")
 
-    # 排序
     df1 = df1.sort_values('date_int').reset_index(drop=True)
     df2 = df2.sort_values('date_int').reset_index(drop=True)
 
-    # 找到相同的日期
     common_dates = set(df1['date_int']).intersection(set(df2['date_int']))
 
     if not common_dates:
         raise ValueError("错误: 两个DataFrame中没有相同的date_int值")
 
     max_common_date = max(common_dates)
+    logger.info(f"最大重叠日期：{max_common_date}")
 
-    print(f"最大重叠日期：{max_common_date}")
-
-    # 获取df2中该日期之后的数据
     df2_to_append = df2[df2['date_int'] >= max_common_date].copy()
 
-    # 添加缺失的列
     for col in df1.columns:
         if col not in df2_to_append.columns:
             if col == 'time_int':
@@ -554,18 +348,14 @@ def append_after_max_common_date_robust(df1, df2, keep_original=True):
             else:
                 df2_to_append[col] = None
 
-    # 确保列顺序一致
     df2_to_append = df2_to_append[df1.columns]
 
     if keep_original:
-        # 保留原始df1中max_common_date之前的数据
         df1_to_keep = df1[df1['date_int'] < max_common_date]
         result_df = pd.concat([df1_to_keep, df2_to_append], ignore_index=True)
     else:
-        # 完全用df2的数据替换
         result_df = df2_to_append
 
-    # 排序和去重（确保数据一致性）
     result_df = result_df.sort_values('date_int')
     result_df = result_df.drop_duplicates(subset='date_int', keep='last')
     result_df = result_df.reset_index(drop=True)
@@ -573,39 +363,364 @@ def append_after_max_common_date_robust(df1, df2, keep_original=True):
     return result_df
 
 
-def append_and_get_tail(df1, df2, m=20):
-    """
-    追加数据并返回最后M条数据
-    """
-    # 先进行追加操作
+def append_and_get_tail(df1: pd.DataFrame, df2: pd.DataFrame, m: int = 20) -> pd.DataFrame:
+    """追加数据并返回最后M条数据"""
     result_df = append_after_max_common_date_robust(df1, df2)
-
-    # 返回最后m条数据
     m = min(m, len(result_df))
     return result_df.tail(m)
 
 
-def generate_file_dat(df, file_path):
-    """
-    将数据按格式还原为通达信扩展数据：extdata_1.dat
-    data数据格式：整数、整数、浮点数
-    """
-    print(df)
+def generate_file_dat(df: pd.DataFrame, file_path: str) -> bool:
+    """将DataFrame数据写入通达信扩展数据文件"""
+    logger.info(f"生成DAT文件，数据行数: {len(df)}")
     try:
-        with open(file_path, 'wb') as f:
-            # 遍历dataframe
+        data_to_write = []
+        for _, row in df.iterrows():
+            date_int = int(row['date_int'])
+            time_int = int(row.get('time_int', 0))
+            value_f = row['value_f']
+            data_to_write.append((date_int, time_int, value_f))
 
-            # 遍历dataframe
-            for _, row in df.iterrows():
-                # 从DataFrame行中获取数据
-                date_int = int(row['date_int'])
-                time_int = int(row.get('time_int', 0))  # 默认为0
-                value_f = row['value_f']
-                # 每个数据项包含：整数1、整数2、4字节浮点数
-                # 使用struct.pack打包为二进制格式，格式符含义：
-                # I: 4字节无符号整数, I: 4字节无符号整数, f: 浮点数，需要转换为4字节浮点数
-                packed_data = struct.pack('IIf', date_int, time_int, value_f)
-                f.write(packed_data)
+        return write_binary_data(file_path, data_to_write)
     except Exception as e:
-        logger.error(f"生成dat文件错误：{e}", exc_info=True)
+        logger.error(f"生成DAT文件错误: {e}", exc_info=True)
         return False
+
+
+# def generate_file_idx(df: pd.DataFrame, file_path: str) -> bool:
+#     """将DataFrame数据写入通达信扩展数据文件"""
+#     logger.info(f"生成IDX文件，数据行数: {len(df)}")
+#     try:
+#         data_to_write = []
+#         for _, row in df.iterrows():
+#
+#
+#     except Exception as e:
+#         logger.error(f"生成DAT文件错误: {e}", exc_info=True)
+#         return False
+
+
+def load_idx_data(idx_path: str) -> pd.DataFrame:
+    """
+    加载并解析idx文件，返回包含累计记录数的DataFrame
+
+    Args:
+        idx_path: idx文件路径
+
+    Returns:
+        DataFrame: 包含market_code, stock_code, record_count, cum_sum的DataFrame
+    """
+    logger.info(f"加载idx文件: {idx_path}")
+    idx_records = parse_file_idx(idx_path)
+    if not idx_records:
+        logger.error(f"idx文件解析失败或为空: {idx_path}")
+        return pd.DataFrame()
+
+    # 将列表转换为DataFrame
+    idx_df = pd.DataFrame(idx_records)
+
+    # 计算累计记录数
+    idx_df['cum_sum'] = idx_df['record_count'].cumsum().shift(1).fillna(0).astype(int)
+    return idx_df
+
+
+def load_dat_data(dat_path: str, idx_df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+    """
+    根据idx文件信息加载dat文件数据
+
+    Args:
+        dat_path: dat文件路径
+        idx_df: 包含cum_sum和record_count的idx DataFrame
+
+    Returns:
+        Dict: 键为股票代码，值为该股票数据的DataFrame
+    """
+    logger.info(f"加载dat文件: {dat_path}")
+    stock_data = {}
+
+    for _, row in idx_df.iterrows():
+        stock_code = row['stock_code']
+        start_index = int(row['cum_sum'])
+        record_count = int(row['record_count'])
+
+        logger.debug(f"加载股票 {stock_code} 的数据，起始位置: {start_index}, 记录数: {record_count}")
+
+        # 读取该股票的数据
+        data_records = parse_file_dat2(dat_path, start_index, record_count)
+        if data_records:
+            stock_df = pd.DataFrame(data_records)
+            stock_data[stock_code] = stock_df
+        else:
+            logger.warning(f"股票 {stock_code} 无数据记录")
+            stock_data[stock_code] = pd.DataFrame()
+
+    return stock_data
+
+
+def merge_stock_data(old_data: pd.DataFrame, new_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    合并同一股票的旧数据和新数据，保留最新的500条记录
+
+    Args:
+        old_data: 旧数据DataFrame
+        new_data: 新数据DataFrame
+
+    Returns:
+        DataFrame: 合并后的数据，最多500条记录
+    """
+    if old_data.empty:
+        return new_data.tail(500) if len(new_data) > 500 else new_data
+
+    if new_data.empty:
+        return old_data.tail(500) if len(old_data) > 500 else old_data
+
+    # 合并数据
+    merged_df = pd.concat([old_data, new_data], ignore_index=True)
+
+    # 按日期排序并去重（保留最新的记录）
+    merged_df = merged_df.sort_values('date_int')
+    merged_df = merged_df.drop_duplicates(subset='date_int', keep='last')
+
+    # 保留最新的500条记录
+    if len(merged_df) > 500:
+        merged_df = merged_df.tail(500)
+
+    return merged_df.sort_values('date_int').reset_index(drop=True)
+
+
+def process_incremental_update(
+        old_idx_df: pd.DataFrame,
+        old_dat_data: Dict[str, pd.DataFrame],
+        new_idx_df: pd.DataFrame,
+        new_dat_data: Dict[str, pd.DataFrame]
+) -> Tuple[pd.DataFrame, Dict[str, pd.DataFrame]]:
+    """
+    处理增量更新，返回更新后的idx信息和股票数据
+
+    Args:
+        old_idx_df: 现有idx数据的DataFrame
+        old_dat_data: 现有dat数据的字典（股票代码->DataFrame）
+        new_idx_df: 增量idx数据的DataFrame
+        new_dat_data: 增量dat数据的字典（股票代码->DataFrame）
+
+    Returns:
+        Tuple: (更新后的idx DataFrame, 更新后的股票数据字典)
+    """
+    # 验证股票代码一致性
+    old_stocks = set(old_idx_df['stock_code'])
+    new_stocks = set(new_idx_df['stock_code'])
+
+    if old_stocks != new_stocks:
+        logger.error(f"股票代码不一致: 现有{len(old_stocks)}只, 增量{len(new_stocks)}只")
+        return pd.DataFrame(), {}
+
+    # 处理每个股票的数据
+    updated_dat_data = {}
+    updated_idx_records = []
+    current_cum_sum = 0
+
+    logger.info("开始处理每个股票的数据...")
+    for stock_code in old_stocks:
+        logger.info(f"处理股票: {stock_code}")
+
+        # 获取该股票的现有数据和增量数据
+        old_stock_data = old_dat_data.get(stock_code, pd.DataFrame())
+        new_stock_data = new_dat_data.get(stock_code, pd.DataFrame())
+
+        # 合并数据
+        merged_data = merge_stock_data(old_stock_data, new_stock_data)
+        updated_dat_data[stock_code] = merged_data
+
+        # 获取该股票的市场代码（从现有idx数据中获取）
+        market_code = old_idx_df[old_idx_df['stock_code'] == stock_code]['market_code'].iloc[0]
+
+        # 更新idx记录
+        record_count = len(merged_data)
+        updated_idx_records.append({
+            'market_code': market_code,
+            'stock_code': stock_code,
+            'record_count': record_count,
+            'cum_sum': current_cum_sum
+        })
+
+        # 更新累计记录数
+        current_cum_sum += record_count
+
+    # 创建更新后的idx DataFrame
+    updated_idx_df = pd.DataFrame(updated_idx_records)
+
+    return updated_idx_df, updated_dat_data
+
+
+def generate_dat_file(dat_data: Dict[str, pd.DataFrame], output_path: str) -> bool:
+    """
+    根据股票数据生成dat文件
+
+    Args:
+        dat_data: 股票数据字典（股票代码->DataFrame）
+        output_path: 输出dat文件路径
+
+    Returns:
+        bool: 是否成功生成文件
+    """
+    logger.info(f"生成dat文件: {output_path}")
+
+    # 收集所有数据记录
+    all_records = []
+    for stock_code, df in dat_data.items():
+        for _, row in df.iterrows():
+            all_records.append((
+                int(row['date_int']),
+                int(row.get('time_int', 0)),
+                float(row['value_f'])
+            ))
+
+    # 写入文件
+    return write_binary_data(output_path, all_records)
+
+
+def generate_idx_file(idx_df: pd.DataFrame, output_path: str) -> bool:
+    """
+    根据idx DataFrame生成idx文件
+
+    Args:
+        idx_df: 包含market_code, stock_code, record_count的DataFrame
+        output_path: 输出idx文件路径
+
+    Returns:
+        bool: 是否成功生成文件
+    """
+    logger.info(f"生成idx文件: {output_path}")
+
+    try:
+        with open(output_path, 'wb') as f:
+            for _, row in idx_df.iterrows():
+                # 打包idx记录: market_code (2字节), stock_code (7字节), 保留16字节, record_count (4字节)
+                stock_code_bytes = row['stock_code'].encode('gb2312').ljust(7, b'\x00')
+                packed_data = struct.pack(
+                    '<H7s16xI',
+                    row['market_code'],
+                    stock_code_bytes,
+                    row['record_count']
+                )
+                f.write(packed_data)
+
+        logger.info(f"成功写入idx文件: {output_path}")
+        return True
+    except Exception as e:
+        logger.error(f"写入idx文件失败: {e}")
+        return False
+
+
+def process_incremental_update_files(
+        old_idx_path: str,
+        old_dat_path: str,
+        new_idx_path: str,
+        new_dat_path: str,
+        output_idx_path: str,
+        output_dat_path: str
+) -> bool:
+    """
+    处理通达信扩展数据文件的增量更新（主函数）
+
+    Args:
+        old_idx_path: 现有idx文件路径
+        old_dat_path: 现有dat文件路径
+        new_idx_path: 增量idx文件路径
+        new_dat_path: 增量dat文件路径
+        output_idx_path: 输出idx文件路径
+        output_dat_path: 输出dat文件路径
+
+    Returns:
+        bool: 处理是否成功
+    """
+    try:
+        # 1. 加载现有文件数据
+        old_idx_df = load_idx_data(old_idx_path)
+        if old_idx_df.empty:
+            return False
+
+        old_dat_data = load_dat_data(old_dat_path, old_idx_df)
+        if not old_dat_data:
+            return False
+
+        # 2. 加载增量文件数据
+        new_idx_df = load_idx_data(new_idx_path)
+        if new_idx_df.empty:
+            return False
+
+        new_dat_data = load_dat_data(new_dat_path, new_idx_df)
+        if not new_dat_data:
+            return False
+
+        # 3. 处理增量更新
+        updated_idx_df, updated_dat_data = process_incremental_update(
+            old_idx_df, old_dat_data, new_idx_df, new_dat_data
+        )
+
+        if updated_idx_df.empty or not updated_dat_data:
+            return False
+
+        # 4. 生成新的dat文件
+        if not generate_dat_file(updated_dat_data, output_dat_path):
+            return False
+
+        # 5. 生成新的idx文件
+        if not generate_idx_file(updated_idx_df, output_idx_path):
+            return False
+
+        logger.info("增量更新处理完成")
+        return True
+
+    except Exception as e:
+        logger.error(f"处理增量更新时发生错误: {e}", exc_info=True)
+        return False
+
+
+def generate_updated_files(
+        old_idx_path: str,
+        old_dat_path: str,
+        new_idx_path: str,
+        new_dat_path: str,
+        output_dir: str
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    生成更新后的idx和dat文件
+
+    Args:
+        old_idx_path: 现有idx文件路径
+        old_dat_path: 现有dat文件路径
+        new_idx_path: 增量idx文件路径
+        new_dat_path: 增量dat文件路径
+        output_dir: 输出目录路径
+
+    Returns:
+        Tuple: (成功生成的idx文件路径, dat文件路径) 或 (None, None) 如果失败
+    """
+    # 创建输出目录
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 生成输出文件路径
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_idx_path = os.path.join(output_dir, f"extdata_updated_{timestamp}.idx")
+    output_dat_path = os.path.join(output_dir, f"extdata_updated_{timestamp}.dat")
+
+    # 处理增量更新
+    success = process_incremental_update_files(
+        old_idx_path, old_dat_path,
+        new_idx_path, new_dat_path,
+        output_idx_path, output_dat_path
+    )
+
+    if success:
+        # 更新文件信息（创建时间）
+        write_file_info(output_idx_path, datetime.now())
+        write_file_info(output_dat_path, datetime.now())
+
+        logger.info(f"更新后的文件已生成:")
+        logger.info(f"  IDX文件: {output_idx_path}")
+        logger.info(f"  DAT文件: {output_dat_path}")
+
+        return output_idx_path, output_dat_path
+    else:
+        return None, None
