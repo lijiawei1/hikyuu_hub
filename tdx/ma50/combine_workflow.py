@@ -37,36 +37,42 @@ class TempDirProcessor(BaseProcessor):
             self.logger.error(f"清理临时目录失败：{e}")
             return data, False
 
-class Combine2Processor(BaseProcessor):
+class ApppendProcessor(BaseProcessor):
     def process(self, data):
 
         append_list = self.get_append_list()
         index = int(append_list[0])
         temp_dir_path = data[5]
-        self.logger.info(f"开始合并数据到临时目录：{temp_dir_path}")
+        self.logger.info(f"开始追加数据到临时目录：{temp_dir_path}")
         work_tdx_path = self.get_work_tdx_path()
         tdx_base_path = self.get_tdx_base_path()
 
+        # 工作通达信目录（银河海王星）
         work_idx_file_path = os.path.join(work_tdx_path, f"extdata_{index}.idx")
         work_dat_file_path = os.path.join(work_tdx_path, f"extdata_{index}.dat")
+        # 基础通达信目录（广发）
         base_idx_file_path = os.path.join(tdx_base_path, f"extdata_{index}.idx")
         base_dat_file_path = os.path.join(tdx_base_path, f"extdata_{index}.dat")
+        # 临时目录
         dest_idx_file_path = os.path.join(temp_dir_path, f"extdata_{index}.idx")
         dest_dat_file_path = os.path.join(temp_dir_path, f"extdata_{index}.dat")
+
         self.logger.debug(f"全量idx文件：{work_idx_file_path}")
-        self.logger.debug(f"全量dat文件：{work_idx_file_path}")
+        self.logger.debug(f"全量dat文件：{work_dat_file_path}")
         self.logger.debug(f"增量idx文件：{base_idx_file_path}")
         self.logger.debug(f"增量dat文件：{base_idx_file_path}")
+        self.logger.debug(f"临时追加idx文件：{dest_idx_file_path}")
+        self.logger.debug(f"临时追加dat文件：{dest_dat_file_path}")
 
 
-        extdata_util.process_incremental_update_files_optimized(
-            old_idx_path=work_idx_file_path,
-            old_dat_path=work_dat_file_path,
-            new_idx_path=base_idx_file_path,
-            new_dat_path=base_dat_file_path,
-            output_idx_path=dest_idx_file_path,
-            output_dat_path=dest_dat_file_path,
-        )
+        # extdata_util.process_incremental_update_files_optimized(
+        #     old_idx_path=work_idx_file_path,
+        #     old_dat_path=work_dat_file_path,
+        #     new_idx_path=base_idx_file_path,
+        #     new_dat_path=base_dat_file_path,
+        #     output_idx_path=dest_idx_file_path,
+        #     output_dat_path=dest_dat_file_path,
+        # )
 
 
 class CombineProcessor(BaseProcessor):
@@ -171,7 +177,7 @@ def main():
     workflow.add_processor(Preprocessor(config, logger))
     workflow.add_processor(TempDirProcessor(config, logger))
     # workflow.add_processor(CombineProcessor(config, logger))
-    workflow.add_processor(Combine2Processor(config, logger))
+    workflow.add_processor(ApppendProcessor(config, logger))
     # workflow.add_processor(CopyResourceProcessor(config, logger))
 
     try:

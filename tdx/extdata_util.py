@@ -21,17 +21,17 @@ DAT_RECORD_SIZE = 12
 INFO_RECORD_SIZE = 293
 
 
-# def setup_logging(log_level=logging.INFO) -> None:
-#     """配置项目日志"""
-#     logging.basicConfig(
-#         level=log_level,
-#         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-#         handlers=[
-#             logging.StreamHandler(),
-#             logging.FileHandler('app.log')
-#         ]
-#     )
-#     logger.setLevel(log_level)
+def setup_logging(log_level=logging.INFO) -> None:
+    """配置项目日志"""
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('app.log')
+        ]
+    )
+    logger.setLevel(log_level)
 
 
 def write_binary_data(file_path: str, data: List[Tuple[int, int, float]], mode: str = 'wb') -> bool:
@@ -145,8 +145,10 @@ def _process_info_record(record_index: int, parsed_data: tuple, raw_data: bytes)
         'name': parsed_data[1].decode('gb2312', errors='ignore').rstrip('\x00'),
         'date_int': parsed_data[2],
         'time_int': parsed_data[3],
-        'date_start': parsed_data[5],
-        'date_end': parsed_data[6]
+        # b'\x00' char 转int
+        'period': parsed_data[5],
+        'date_start': parsed_data[6],
+        'date_end': parsed_data[7]
         # 'raw_hex': raw_data.hex()
     }
 
@@ -176,11 +178,12 @@ def parse_file_info(file_path: str) -> List[Dict]:
         '<'  # 小端序
         'H'  # 2字节无符号整数
         '64s'  # 64字节字符串
-        'I'  # 4字节无符号整数
-        'I'  # 4字节无符号整数
-        'I'  # 4字节无符号整数
-        '83x'  # 跳过83字节
-        'I'  # 4字节无符号整数
+        'I'  # 4字节无符号整数  数据生成日期
+        'I'  # 4字节无符号整数  数据生成时间
+        'I'  # 4字节无符号整数  数据生成毫秒
+        '82x'  # 跳过83字节    1+14（指标公式名称）+64（参数设置-设置计算参数，指标公式中设置的参数值）+1（参数设置-参数个数）+2（计算周期）
+        'b'  # 1字节字符       计算时段的第二个选项（指定时间段）的时间范围，0-最近500条，1-指定时间段，2-本地所有数据
+        'I'  # 4字节无符号整数  
         'I'  # 4字节无符号整数
         '124x'  # 跳过124字节
     )
@@ -338,7 +341,7 @@ def append_after_max_common_date_robust(df1: pd.DataFrame, df2: pd.DataFrame,
         raise ValueError("错误: 两个DataFrame中没有相同的date_int值")
 
     max_common_date = max(common_dates)
-    logger.info(f"最大重叠日期：{max_common_date}")
+    # logger.debug(f"最大重叠日期：{max_common_date}")
 
     df2_to_append = df2[df2['date_int'] >= max_common_date].copy()
 
@@ -505,6 +508,10 @@ def process_incremental_update_files_optimized(
         logger.info("并行加载idx文件...")
         old_idx_df, new_idx_df = load_idx_data_parallel(old_idx_path, new_idx_path)
 
+        # 输出csv文件，目录同output_idx_path
+        old_idx_df.to_csv(output_idx_path.replace('.idx', '_work.csv'), index=False)
+        new_idx_df.to_csv(output_idx_path.replace('.idx', '_base.csv'), index=False)
+
         if old_idx_df.empty or new_idx_df.empty:
             return False
 
@@ -512,6 +519,8 @@ def process_incremental_update_files_optimized(
         old_stocks = set(old_idx_df['stock_code'])
         new_stocks = set(new_idx_df['stock_code'])
         all_stocks = old_stocks | new_stocks
+
+        logger.info(f"合并新旧股票池，共{len(all_stocks)}只股票")
 
         # 3. 并行加载dat文件
         logger.info("并行加载dat文件...")
@@ -524,14 +533,22 @@ def process_incremental_update_files_optimized(
         updated_idx_df, updated_dat_data = process_incremental_update_optimized(
             old_idx_df, old_dat_data, new_idx_df, new_dat_data
         )
+        # 输出csv文件，目录同output_idx_path
+        updated_idx_df.to_csv(output_idx_path.replace('.idx', '_temp.csv'), index=False)
+
+        # 输出合并汇总，交集数量，并集数量，新增数量，新增的股票代码集合，不再更新的股票代码集合
+        logger.info(f"合并汇总，交集数量:{len(old_stocks & new_stocks)}, 并集数量:{len(old_stocks | new_stocks)}, 新增数量:{len(new_stocks - old_stocks)}")
+        logger.info(f"新增的股票代码集合:{new_stocks - old_stocks}")
+        logger.info(f"不再更新的股票代码集合:{old_stocks - new_stocks}")
+
 
         if updated_idx_df.empty or not updated_dat_data:
             return False
 
         # 5. 生成新文件
         logger.info("生成新文件...")
-        success = generate_files_parallel(updated_idx_df, updated_dat_data, output_idx_path, output_dat_path)
-
+        # success = generate_files_parallel(updated_idx_df, updated_dat_data, output_idx_path, output_dat_path)
+        success = True
         return success
 
     except Exception as e:

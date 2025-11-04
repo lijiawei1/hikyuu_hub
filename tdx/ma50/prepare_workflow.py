@@ -23,22 +23,40 @@ class PeriodProcessor(BaseProcessor):
         pre_100_day_int = data[2]
         pre_300_day_int = data[3]
 
+        # 读取检查
+        records = extdata_util.parse_file_info(info_file_path)
+        info_df = pd.DataFrame(records)
+        # 增加自然序号index列
+        info_df['index'] = range(0, len(info_df))
+        # 计算name列与index列的映射
+        name_index_map = dict(zip(info_df['name'], info_df['index']))
+
         # 300天
-        extdata_util.write_file_info_batch(info_file_path, [10, 11], 0xA1, '<II',
-                                           [pre_300_day_int, last_trading_day_int])
+        index_list = self.get_index_list(name_index_map, ['个股月多标记', '板块月多标记'])
+        extdata_util.write_file_info_batch(info_file_path, index_list, 0xA0, '<bII',
+                                           [1, pre_300_day_int, last_trading_day_int])
         # 100天
-        extdata_util.write_file_info_batch(info_file_path, [12, 13, 14, 15], 0xA1, '<II',
-                                           [pre_100_day_int, last_trading_day_int])
+        index_list = self.get_index_list(name_index_map, ['上MA50标记', '全A数量标记', '新高标记', '新低标记'])
+        extdata_util.write_file_info_batch(info_file_path, index_list, 0xA0, '<bII',
+                                           [1, pre_100_day_int, last_trading_day_int])
 
-        extdata_util.write_file_info_batch(info_file_path, [16], 0xA1, '<II',
-                                           [pre_300_day_int, last_trading_day_int])
+        index_list = self.get_index_list(name_index_map, ['二阶段标记'])
+        extdata_util.write_file_info_batch(info_file_path, index_list, 0xA0, '<bII',
+                                           [1, pre_300_day_int, last_trading_day_int])
 
-        temp_extdata_path = self.get_temp_extdata_path()
+        index_list = self.get_index_list(name_index_map,
+                                         ['BS个股', '动量股_D', '趋势股_D', '慢牛股_D', '动量股_W', '趋势股_W',
+                                          '慢牛股_W', '动量股_M','趋势股_M', '慢牛股_M'])
+
+        extdata_util.write_file_info_batch(info_file_path, index_list, 0xA0, '<bII',
+                                           [1, pre_300_day_int, last_trading_day_int])
 
         # 读取检查
         records = extdata_util.parse_file_info(info_file_path)
         df = pd.DataFrame(records)
-        df.to_csv(os.path.join(temp_extdata_path, "base_extdata_info.csv"), index=False)
+        # 文件名增加时间戳
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        df.to_csv(os.path.join(self.get_temp_extdata_path(), f"base_extdata_info_{timestamp}.csv"), index=False)
 
         # 读取df首行数据['seq']的值
         # 检查df列
@@ -51,25 +69,10 @@ class PeriodProcessor(BaseProcessor):
             self.logger.warning("更新info文件周期失败")
             return data, False
 
-
-# 自定义处理器实现
-# class DataLoader(BaseProcessor):
-#     def process(self, data):
-#
-#         self.logger.debug(f"数据预处理：{data}")
-#         self.logger.info("读取原extdata.dat文件数据...")
-#
-#         tdx_base_path = self.get_tdx_base_path()
-#         info_file_path = self.get_info_file_path()
-#
-#         ma50_file = self.config.get("path", {}).get("ma50_file")
-#         ma50_text = self.config.get("path", {}).get("ma50_text")
-#         ma50_file_path = os.path.join(tdx_base_path, ma50_file)
-#         self.logger.debug(f"info文件路径：{info_file_path}")
-#         self.logger.debug(f"dat文件枯井：{ma50_file_path}")
-#
-#         # 实际的数据加载逻辑
-#         return {"sample": "data"}
+    def get_index_list(self, name_index_map, name_list):
+        # 使用name_list从name_index_map获取index列表
+        index_list = [name_index_map.get(name, None) for name in name_list]
+        return index_list
 
 
 # 使用工作流框架

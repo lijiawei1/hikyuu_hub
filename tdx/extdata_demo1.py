@@ -6,8 +6,8 @@ from extdata_util import *
 # 1.第一步，批量修改统计时间
 # write_file_info_batch('D:\\app\\hwx\\T0002\\extdata\\extdata.info.bak', [12, 13], 0xA1, '<II', [20220821, 20240819])
 # records = parse_file_info('D:\\app\\hwx\\T0002\\extdata\\extdata.info.bak')
-records = parse_file_info('F:\\gfzq_tdx\\T0002\\extdata\\extdata.info')
-pd.DataFrame(records).to_csv("temp_info.csv")
+# records = parse_file_info('F:\\gfzq_tdx\\T0002\\extdata\\extdata.info')
+# pd.DataFrame(records).to_csv("temp_info.csv")
 
 # read_file_info('D:\\app\\hwx\\T0002\\extdata\\extdata111.info.bak')
 # parse_file_info('D:\\app\\hwx\\T0002\\extdata\\extdata.info')
@@ -25,9 +25,9 @@ pd.DataFrame(records).to_csv("temp_info.csv")
 #
 #
 # parse_file_idx("D:\\app\\hwx\\T0002\\extdata\\extdata_63.idx")
-# records = parse_file_dat("D:\\app\\hwx\\T0002\\extdata\\extdata_63.dat")
-# df = pd.DataFrame(records)
-# print(df)
+records = parse_file_dat("D:\\app\\hwx\\T0002\\extdata\\extdata_63.dat")
+df = pd.DataFrame(records)
+print(df)
 #
 # # after_df = update_and_append_df(result_df, df, 7, 20)
 # after_df = append_and_get_tail(df, result_df,500)
@@ -43,3 +43,5 @@ pd.DataFrame(records).to_csv("temp_info.csv")
 # records = parse_file_dat("D:\\app\\hwx\\T0002\\extdata\\extdata_63_new.dat")
 # df = pd.DataFrame(records)
 # print(df)
+
+

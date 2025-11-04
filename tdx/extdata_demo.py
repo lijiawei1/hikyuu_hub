@@ -1,5 +1,23 @@
 from extdata_util import *
 
+# 读取RPS数据索引
+idx_df = load_idx_data("D:\\app\\hwx\\T0002\\extdata\\extdata_1.idx")
+print(idx_df.head())
+idx_df.to_csv("extdata_1_idx.csv")
+
+stock_data = load_stock_data_optimized(dat_path = "D:\\app\\hwx\\T0002\\extdata\\extdata_1.dat",
+                                       idx_df = idx_df,
+                                       stock_codes = {'302132'})
+print(stock_data['302132'])
+
+
+
+# records = parse_file_dat("D:\\app\\hwx\\T0002\\extdata\\extdata_11.dat")
+# df = pd.DataFrame(records)
+# print(df)
+
+
+
 # write_file_info('D:\\app\\hwx\\T0002\\extdata\\extdata.info.bak', create=datetime.now())
 # 1.第一步，批量修改统计时间
 # write_file_info_batch('D:\\app\\hwx\\T0002\\extdata\\extdata.info.bak', [12, 13], 0xA1, '<II', [20230822, 20240820])
@@ -26,8 +44,11 @@ from extdata_util import *
 
 
 #
-# parse_file_idx("D:\\app\\hwx\\T0002\\extdata\\extdata_61.idx")
-# records = parse_file_dat("D:\\app\\hwx\\T0002\\extdata\\extdata_61.dat")
+# records = parse_file_idx("data/extdata_68.idx")
+# df = pd.DataFrame(records)
+# print(df)
+
+# records = parse_file_dat("data/extdata_68.dat")
 # df = pd.DataFrame(records)
 # print(df)
 #
