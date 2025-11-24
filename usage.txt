@@ -1,0 +1,14 @@
+仓库使用
+
+python -m pip install hikyuu -U
+
+conda.bat activate
+conda activate hikyuu_hub
+
+pip install hikyuu -U -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn
+
+python -m pip install hikyuu-plugin -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn
+
+jupyter notebook
+
+jupyter notebook --ip=192.168.1.100 --no-browser

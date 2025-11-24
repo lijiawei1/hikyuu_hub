@@ -25,9 +25,9 @@ from extdata_util import *
 #
 #
 # parse_file_idx("D:\\app\\hwx\\T0002\\extdata\\extdata_63.idx")
-records = parse_file_dat("D:\\app\\hwx\\T0002\\extdata\\extdata_63.dat")
-df = pd.DataFrame(records)
-print(df)
+# records = parse_file_dat("D:\\app\\hwx\\T0002\\extdata\\extdata_63.dat")
+# df = pd.DataFrame(records)
+# print(df)
 #
 # # after_df = update_and_append_df(result_df, df, 7, 20)
 # after_df = append_and_get_tail(df, result_df,500)
@@ -44,4 +44,20 @@ print(df)
 # df = pd.DataFrame(records)
 # print(df)
 
+# 1.读取索引
+record_list = parse_file_idx("C:\\hwx\\T0002\\extdata\\extdata_182.idx")
+# [{'i': 0, 'market_code': 1, 'stock_code': '999999', 'record_count': 3785}]
+df = pd.DataFrame(record_list)
+print(df)
+# df.loc[0, 'record_count'] = 1000
+# generate_idx_file(df, "C:\\hwx\\T0002\\extdata\\extdata_183.idx")
 
+# record_list = parse_file_idx("C:\\hwx\\T0002\\extdata\\extdata_183.idx")
+# print(record_list)
+
+# records = parse_file_dat("C:\\hwx\\T0002\\extdata\\extdata_182.dat")
+# df = pd.DataFrame(records)
+# print(df)
+
+# 2.修改索引
+# generate_idx_file("C:\\hwx\\T0002\\extdata\\extdata_182.idx", "C:\\hwx\\T0002\\extdata\\extdata_182_new.idx")
