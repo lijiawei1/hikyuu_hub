@@ -12,3 +12,5 @@ python -m pip install hikyuu-plugin -i https://pypi.tuna.tsinghua.edu.cn/simple 
 jupyter notebook
 
 jupyter notebook --ip=192.168.1.100 --no-browser
+
+pip install streamlit -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn

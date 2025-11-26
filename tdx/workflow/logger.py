@@ -10,6 +10,9 @@ class WorkflowLogger:
         self.logger = logging.getLogger(name)
         self.logger.setLevel(getattr(logging, log_level.upper()))
 
+        # 关键修改：阻止日志传播到父logger
+        self.logger.propagate = False
+
         # 清除现有处理器
         self.logger.handlers.clear()
 

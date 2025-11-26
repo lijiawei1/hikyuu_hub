@@ -22,6 +22,7 @@ class Preprocessor(BaseProcessor):
         self.logger.debug(f"当前日期:{today}, 最近一个交易日{last_trading_day}，往前第100个交易日:{pre_100_day}，往前第300个交易日:{pre_300_day}")
 
         # 检查完整配置info文件的最新更新日期
+        self.logger.debug(self.get_info_file_path())
         idx_list = extdata_util.parse_file_info(self.get_info_file_path())
         idx_df = pd.DataFrame(idx_list)
         # 输出 date_int列最大值
@@ -35,11 +36,12 @@ class Preprocessor(BaseProcessor):
 
         self.logger.info("info文件更新日期小于最近一个交易日，需要更新统计指标！")
         # 将日期传给下一个处理器
-        data = [
-            today_int,
-            last_trading_day_int,
-            pre_100_day_int,
-            pre_300_day_int,
-            int(max_date_int)
-        ]
+        # 将日期传给下一个处理器 - 改为使用字典类型
+        data = {
+            'today_int': today_int,
+            'last_trading_day_int': last_trading_day_int,
+            'pre_100_day_int': pre_100_day_int,
+            'pre_300_day_int': pre_300_day_int,
+            'max_date_int': int(max_date_int)
+        }
         return data, True

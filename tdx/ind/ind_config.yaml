@@ -1,0 +1,57 @@
+# 工作流配置
+workflow:
+  name: "示例工作流"
+  max_retries: 3
+  timeout: 3600
+
+# 日志配置
+logging:
+  level: "DEBUG"
+  file: "workflow.log"
+
+# 处理器特定配置
+processors:
+  data_loader:
+    input_path: "/path/to/input/data"
+  data_transformer:
+    method: "normalize"
+  data_saver:
+    output_path: "/path/to/output/data"
+
+
+path:
+  # 负责数据生成的通达信
+#  tdx_base_path: "D:\\app\\hwx\\T0002\\extdata"
+  tdx_base_path: "F:\\gfzq_tdx\\T0002\\extdata"
+  # 负责选股的通达信
+  work_tdx_path: "D:\\app\\hwx\\T0002\\extdata"
+  # 通达信中间数据备份存放的地方
+  temp_extdata_path: "F:\\stock\\temp_tdx_extdata"
+
+  info_file: "extdata.info"
+  ma50_text: "上MA50数量"
+  ma50_dat_file: "extdata_63.dat"
+  ma50_flag_file: "extdata_13.dat"
+  alla_file: "extdata_64.dat"
+
+  # 统计并追加的文件映射
+  # 标记 : 统计
+  flag_sum_mapping:
+    "extdata_11.dat": "extdata_61.dat"
+    "extdata_12.dat": "extdata_62.dat"
+    "extdata_13.dat": "extdata_63.dat"
+    "extdata_14.dat": "extdata_64.dat"
+    "extdata_15.dat": "extdata_65.dat"
+    "extdata_16.dat": "extdata_66.dat"
+    "extdata_17.dat": "extdata_67.dat"
+
+  # 直接追加
+  append_list: [42]
+
+  # 直接将列表复制，所有的idx文件
+
+  copy_ranges:
+    - [1, 10]
+    - [101, 110]
+
+
